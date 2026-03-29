@@ -54,15 +54,6 @@ ENV PYTHONPATH=/app
 
 EXPOSE 7860
 
-# Liveness probe — HF Spaces pings /health to decide when the Space is ready
-HEALTHCHECK \
-    --interval=30s \
-    --timeout=10s \
-    --start-period=15s \
-    --retries=3 \
-    CMD python -c \
-    "import urllib.request; urllib.request.urlopen('http://localhost:7860/health')"
-
 # ── Start server ──────────────────────────────────────────────────────────────
 # Runs server.app:main() which calls uvicorn on PORT
 CMD ["python", "-c", \
