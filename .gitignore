@@ -1,0 +1,16 @@
+*.eml
+.env*
+__pycache__/
+.pytest_cache/
+*.egg-info/
+.DS_Store
+email-triage-env_codebase_digest.txt
+.agent/
+.gemini/
+node_modules/
+dist/
+build/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints/

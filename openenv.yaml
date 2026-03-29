@@ -1,0 +1,102 @@
+# openenv.yaml — Environment manifest
+# Read by `openenv validate` and published to Hugging Face Hub.
+# Tag your HF Space with "openenv" for discovery.
+
+name: email-triage-env
+version: "1.0.0"
+description: >
+  A real-world email triage environment for training and evaluating AI agents.
+  Agents must classify urgency, rank inbox priority, draft professional replies,
+  and route emails to the correct department — mirroring the work of an executive
+  assistant managing a busy inbox.
+
+author: "solo-warrior"
+license: "MIT"
+
+tags:
+  - openenv
+  - email
+  - triage
+  - nlp
+  - real-world
+  - productivity
+  - multi-task
+
+# Container configuration (Hugging Face Spaces Docker Space)
+container:
+  port: 7860
+  health_check: "/health"
+
+# Core OpenEnv interface endpoints (provided by create_fastapi_app)
+endpoints:
+  websocket: "/ws"
+  reset:     "/reset"
+  step:      "/step"
+  state:     "/state"
+  docs:      "/docs"
+  health:    "/health"
+
+# Extra endpoints added by this environment
+extra_endpoints:
+  tasks:    "/tasks"
+  grader:   "/grader"
+  baseline: "/baseline"
+
+# Task definitions
+tasks:
+  - id: easy
+    name: "Single Email Classification"
+    description: "Classify one email by urgency (urgent/normal/low/spam) and priority (1–5)."
+    difficulty: easy
+    max_steps: 5
+    pass_threshold: 0.70
+    excellent_threshold: 0.90
+
+  - id: medium
+    name: "Inbox Priority Ranking"
+    description: "Sort 10 emails from most to least urgent using Kendall-tau scoring."
+    difficulty: medium
+    max_steps: 8
+    pass_threshold: 0.60
+    excellent_threshold: 0.85
+
+  - id: hard
+    name: "Full Triage Pipeline"
+    description: "Classify urgency, draft a professional reply, and route to the correct department."
+    difficulty: hard
+    max_steps: 10
+    pass_threshold: 0.55
+    excellent_threshold: 0.80
+
+# Action space
+action_space:
+  type: structured
+  model: EmailAction
+  action_types: [classify, rank, triage, done]
+
+# Observation space
+observation_space:
+  type: structured
+  model: EmailObservation
+  reward_included: true    # reward is a field on Observation (openenv-core standard)
+  done_included: true      # done is a field on Observation (openenv-core standard)
+
+# Reward characteristics
+reward:
+  type: continuous
+  range: [-0.20, 1.15]
+  shape: step-wise         # signal at every step, not just episode end
+  partial_credit: true     # correct but imperfect actions still earn reward
+
+# Baseline scores (heuristic keyword agent vs zero-shot LLM)
+baseline_scores:
+  heuristic_v1:
+    easy:   0.85
+    medium: 5.10   # cumulative tau over 8 steps
+    hard:   1.15
+  gpt4o_mini_zeroshot:
+    easy:   0.94
+    medium: 0.72   # avg tau
+    hard:   0.82
+
+python_requires: ">=3.10"

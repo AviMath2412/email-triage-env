@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "email-triage-env"
+version = "1.0.0"
+description = "An OpenEnv environment for real-world email triage tasks"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv-core[core]>=0.2.0",
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.0.0",
+    "websockets>=12.0",
+    "requests>=2.25.0",
+    "openai>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "httpx>=0.24.0",
+]
+
+# openenv validate checks for this exact entry
+# "server" must point to a callable main() in server/app.py
+[project.scripts]
+server = "server.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["server*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
