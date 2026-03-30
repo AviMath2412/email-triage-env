@@ -287,7 +287,7 @@ Run via `curl http://localhost:7860/baseline`
 | hard | 1.15 | Excellent |
 
 ### GPT-4o-mini Zero-Shot
-Run via `python baseline.py`
+Run via `python inference.py`
 
 | Task | Avg Score | Pass Rate |
 |---|---|---|
@@ -298,7 +298,7 @@ Run via `python baseline.py`
 Reproduce the baseline:
 ```bash
 export OPENAI_API_KEY=sk-...
-python baseline.py --task all --episodes 3
+python inference.py --task all --episodes 3
 ```
 
 ---
@@ -335,7 +335,7 @@ email-triage-env/
 │   ├── data.py             # Email templates and task metadata
 │   └── baseline_heuristic.py # Reference non-LLM agent
 ├── client.py               # SDK for easy integration
-├── baseline.py             # LLM evaluation script (OpenAI)
+├── inference.py            # LLM evaluation script (OpenAI)
 ├── openenv.yaml            # Environment manifest
 ├── pyproject.toml          # Setup tools config
 ├── Dockerfile              # Container definition

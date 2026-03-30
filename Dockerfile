@@ -36,7 +36,7 @@ RUN pip install --no-cache-dir \
 # ── Copy source ───────────────────────────────────────────────────────────────
 # Note: models.py and data.py are included inside the /server/ directory copy
 COPY client.py     .
-COPY baseline.py   .
+COPY inference.py  .
 COPY openenv.yaml  .
 COPY server/       ./server/
 

@@ -1,21 +1,20 @@
 """
-baseline.py — Baseline inference script using the OpenAI API.
+inference.py — Baseline inference script using the OpenAI API.
 
 Runs a GPT model zero-shot against all three tasks and reports graded scores.
 Reads OPENAI_API_KEY from environment (never hardcoded).
 
 IMPORTANT: The environment server must be running before you call this.
-  Start server:  server   (after `pip install -e .`)
-       OR        python server/app.py
-       OR        docker run -p 7860:7860 email-triage-env
+  Start server:  PORT=8000 python -m server.app
+       OR        docker run -p 8000:7860 email-triage-env
 
 Usage:
     export OPENAI_API_KEY=sk-...
-    python baseline.py                         # all 3 tasks, 3 episodes each
-    python baseline.py --task easy             # single task
-    python baseline.py --episodes 5            # more episodes for stable scores
-    python baseline.py --env-url http://localhost:7860
-    python baseline.py --model gpt-4o          # stronger model
+    python inference.py                         # all 3 tasks, 3 episodes each
+    python inference.py --task easy             # single task
+    python inference.py --episodes 5            # more episodes for stable scores
+    python inference.py --env-url http://localhost:8000
+    python inference.py --model gpt-4o          # stronger model
 """
 
 from __future__ import annotations
