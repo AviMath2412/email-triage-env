@@ -9,10 +9,17 @@ Extends openenv-core's EnvClient, implementing the three required abstract metho
 Usage:
     with EmailTriageEnv(base_url="http://localhost:8000") as env:
         result = env.reset(task_id="easy")
-        result = env.step(EmailAction(action_type="classify", ...))
+        obs = result.observation
+        print(f"Email: {obs.single_email.subject}")
 
-Install from HF Space:
-    pip install git+https://huggingface.co/spaces/YOUR-USERNAME/email-triage-env
+        result = env.step(EmailAction(
+            action_type="classify",
+            email_id=obs.single_email.id,
+            urgency="urgent",
+            priority=5,
+        ))
+        print(f"Reward: {result.reward}")
+        print(f"Feedback: {result.observation.last_action_feedback}")
 """
 
 from __future__ import annotations
@@ -27,20 +34,15 @@ from server.models import EmailAction, EmailObservation, EmailState
 class EmailTriageEnv(EnvClient[EmailAction, EmailObservation, EmailState]):
     """
     Client for the Email Triage Environment.
-
-    Inherits all connection management, async/sync wrapping, and WebSocket
-    protocol from EnvClient. We only need to implement the three serialization methods.
+    Inherits all connection management and WebSocket protocol from EnvClient.
     """
 
     def _step_payload(self, action: EmailAction) -> Dict[str, Any]:
-        """Serialize EmailAction to the dict sent over WebSocket."""
+        """Serialize EmailAction to dict sent over WebSocket."""
         return action.model_dump(exclude_none=True)
 
     def _parse_result(self, payload: Dict[str, Any]) -> StepResult[EmailObservation]:
-        """
-        Deserialize server response → StepResult[EmailObservation].
-        Wire format: {"observation": {...}, "reward": float|None, "done": bool}
-        """
+        """Deserialize server response → StepResult[EmailObservation]."""
         obs_data = payload.get("observation", payload)
         obs = EmailObservation(**obs_data)
         return StepResult(
@@ -54,6 +56,4 @@ class EmailTriageEnv(EnvClient[EmailAction, EmailObservation, EmailState]):
         return EmailState(**payload)
 
 
-# Convenience re-exports so users can do:
-#   from email_triage_env import EmailTriageEnv, EmailAction, EmailObservation
 __all__ = ["EmailTriageEnv", "EmailAction", "EmailObservation", "EmailState"]

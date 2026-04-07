@@ -1,5 +1,5 @@
 """
-data.py — Shared constants, templates and task definitions for the Email Triage Environment.
+server/data.py — Shared constants, templates, and task definitions.
 """
 
 from .models import UrgencyLabel, Department

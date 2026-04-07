@@ -24,8 +24,6 @@ dev = [
     "httpx>=0.24.0",
 ]
 
-# openenv validate checks for this exact entry
-# "server" must point to a callable main() in server/app.py
 [project.scripts]
 server = "server.app:main"
 

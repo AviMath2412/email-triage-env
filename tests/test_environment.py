@@ -14,7 +14,8 @@ Run with:
 
 import pytest
 from server.models import EmailAction, EmailObservation, EmailState, UrgencyLabel, Department
-from server.environment import EmailTriageEnvironment, TASKS
+from server.environment import EmailTriageEnvironment
+from server.data import TASKS
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -68,7 +69,6 @@ class TestReset:
 
 class TestEasyTask:
     def _perfect_action(self, env, obs):
-        """Build an action that exactly matches ground truth."""
         e  = obs.single_email
         gt = env._ground_truths[e.id]
         return EmailAction(
@@ -82,7 +82,6 @@ class TestEasyTask:
         obs = env.reset(task_id="easy", seed=7)
         action = self._perfect_action(env, obs)
         obs2 = env.step(action)
-        # Perfect correctness (0.80) + efficiency bonus (0.20 max) → ≥ 0.80
         assert obs2.reward >= 0.80
         assert obs2.done is True
 
@@ -90,7 +89,6 @@ class TestEasyTask:
         obs = env.reset(task_id="easy", seed=7)
         e   = obs.single_email
         gt  = env._ground_truths[e.id]
-        # Correct priority, wrong urgency
         wrong_urgency = next(u for u in UrgencyLabel if u != gt["urgency"])
         action = EmailAction(
             action_type="classify",
@@ -99,7 +97,7 @@ class TestEasyTask:
             priority=gt["priority"],
         )
         obs2 = env.step(action)
-        assert obs2.reward < 0.80   # lower than perfect
+        assert obs2.reward < 0.80
         assert obs2.done is True
 
     def test_priority_off_by_1_gets_partial_credit(self, env):
@@ -107,7 +105,7 @@ class TestEasyTask:
             obs = env.reset(task_id="easy", seed=seed)
             e   = obs.single_email
             gt  = env._ground_truths[e.id]
-            if gt["priority"] not in (1, 5):   # only test where off-by-1 is valid
+            if gt["priority"] not in (1, 5):
                 adj_priority = gt["priority"] + 1
                 action = EmailAction(
                     action_type="classify",
@@ -116,7 +114,6 @@ class TestEasyTask:
                     priority=adj_priority,
                 )
                 obs2 = env.step(action)
-                # Should get urgency credit (0.50) + 0.5×priority (0.15) + efficiency
                 assert obs2.reward > 0.30
                 break
 
@@ -125,7 +122,7 @@ class TestEasyTask:
         action = EmailAction(action_type="rank", ranked_ids=[obs.single_email.id])
         obs2 = env.step(action)
         assert obs2.reward < 0
-        assert obs2.done is False   # episode continues after penalty
+        assert obs2.done is False
 
     def test_missing_fields_penalised(self, env):
         obs = env.reset(task_id="easy", seed=0)
@@ -143,7 +140,6 @@ class TestEasyTask:
     def test_step_after_done_penalised(self, env):
         obs = env.reset(task_id="easy", seed=0)
         obs = env.step(self._perfect_action(env, obs))
-        # Try to step again
         obs2 = env.step(EmailAction(action_type="done"))
         assert obs2.reward < 0
         assert obs2.done is True
@@ -153,7 +149,6 @@ class TestEasyTask:
 
 class TestMediumTask:
     def _correct_ranking(self, env, obs):
-        """Build a perfect ranking from ground truth."""
         ranked = sorted(
             obs.inbox,
             key=lambda e: env._ground_truths[e.id]["priority"],
@@ -169,55 +164,39 @@ class TestMediumTask:
         action = self._correct_ranking(env, obs)
         obs2 = env.step(action)
         assert obs2.reward >= 0.80
-        # tau ≥ 0.95 → episode auto-completes
         assert obs2.done is True
 
     def test_worst_ranking_scores_below_perfect(self, env):
         obs = env.reset(task_id="medium", seed=5)
-        # Worst possible: sort ascending (lowest priority first)
-        worst = sorted(
-            obs.inbox,
-            key=lambda e: env._ground_truths[e.id]["priority"],
-        )  # ascending = opposite of correct
+        worst = sorted(obs.inbox, key=lambda e: env._ground_truths[e.id]["priority"])
         action = EmailAction(action_type="rank", ranked_ids=[e.id for e in worst])
         obs_worst = env.step(action)
 
         env2 = EmailTriageEnvironment()
         obs2 = env2.reset(task_id="medium", seed=5)
-        perfect = sorted(
-            obs2.inbox,
-            key=lambda e: env2._ground_truths[e.id]["priority"],
-            reverse=True,
-        )
-        obs_perfect = env2.step(
-            EmailAction(action_type="rank", ranked_ids=[e.id for e in perfect])
-        )
-        # Perfect ranking must outscore worst ranking
+        perfect = sorted(obs2.inbox, key=lambda e: env2._ground_truths[e.id]["priority"], reverse=True)
+        obs_perfect = env2.step(EmailAction(action_type="rank", ranked_ids=[e.id for e in perfect]))
         assert obs_perfect.reward > obs_worst.reward
 
     def test_missing_email_id_penalised(self, env):
         obs = env.reset(task_id="medium", seed=5)
-        partial = [e.id for e in obs.inbox[:5]]   # missing 5 IDs
+        partial = [e.id for e in obs.inbox[:5]]
         action = EmailAction(action_type="rank", ranked_ids=partial)
         obs2 = env.step(action)
         assert obs2.reward < 0
 
     def test_can_improve_over_multiple_steps(self, env):
         obs = env.reset(task_id="medium", seed=5)
-        # Step 1: random order
         action1 = EmailAction(action_type="rank", ranked_ids=[e.id for e in obs.inbox])
         obs1    = env.step(action1)
-        r1      = obs1.reward
 
         if obs1.done:
-            return  # already perfect — skip
+            return
 
-        # Step 2: correct order
         obs_temp = env.reset(task_id="medium", seed=5)
         ranked   = sorted(obs_temp.inbox, key=lambda e: env._ground_truths[e.id]["priority"], reverse=True)
         action2  = EmailAction(action_type="rank", ranked_ids=[e.id for e in ranked])
         obs2     = env.step(action2)
-        # Second (improved) step should have higher correctness score
         assert obs2.correctness_score >= obs1.correctness_score
 
 
@@ -254,18 +233,16 @@ class TestHardTask:
         wrong_dept = next(d for d in Department if d != gt["department"])
         action = self._full_action(env, obs, route=wrong_dept)
         obs2 = env.step(action)
-        # Without routing score (40%), total = 0.3+0.3 + 0.15 = 0.75
         assert obs2.reward < 0.80
 
     def test_empty_reply_lowers_score(self, env):
         obs = env.reset(task_id="hard", seed=3)
-        action = self._full_action(env, obs, reply="ok")
-        obs2 = env.step(action)
-        # Short reply → reply_score ≈ 0 → total down by 30%
-        full_action  = self._full_action(env, obs)
+        action_short = self._full_action(env, obs, reply="ok")
+        obs2 = env.step(action_short)
+
         env2 = EmailTriageEnvironment()
         obs_full = env2.reset(task_id="hard", seed=3)
-        obs_full2 = env2.step(full_action)
+        obs_full2 = env2.step(self._full_action(env2, obs_full))
         assert obs2.reward < obs_full2.reward
 
     def test_missing_fields_penalised(self, env):
@@ -275,29 +252,26 @@ class TestHardTask:
             email_id=obs.single_email.id,
             urgency="urgent",
             priority=5,
-            # missing reply_draft and route_to
         )
         obs2 = env.step(action)
         assert obs2.reward < 0
 
 
-# ── Reward function invariants ────────────────────────────────────────────────
+# ── Reward invariants ─────────────────────────────────────────────────────────
 
 class TestRewardInvariants:
     def test_done_action_immediately_penalised(self, env):
-        obs = env.reset(task_id="easy", seed=0)
+        env.reset(task_id="easy", seed=0)
         obs2 = env.step(EmailAction(action_type="done"))
         assert obs2.reward <= -0.10
 
     def test_max_steps_exceeded_penalised(self, env):
         obs = env.reset(task_id="easy", seed=0)
-        # Send bad actions until we exceed max_steps
         for _ in range(TASKS["easy"]["max_steps"] + 1):
             action = EmailAction(action_type="rank", ranked_ids=[obs.single_email.id])
             obs = env.step(action)
             if obs.done:
                 break
-        # Final reward should include a penalty
         assert obs.reward <= 0
 
     @pytest.mark.parametrize("task_id", ["easy", "medium", "hard"])
@@ -306,14 +280,11 @@ class TestRewardInvariants:
         assert env.state.step_count == 0
 
         if task_id == "easy":
-            obs = env.step(EmailAction(action_type="done"))
+            env.step(EmailAction(action_type="done"))
         elif task_id == "medium":
-            obs = env.step(EmailAction(
-                action_type="rank",
-                ranked_ids=[e.id for e in env._emails],
-            ))
+            env.step(EmailAction(action_type="rank", ranked_ids=[e.id for e in env._emails]))
         else:
-            obs = env.step(EmailAction(action_type="done"))
+            env.step(EmailAction(action_type="done"))
 
         assert env.state.step_count == 1
 

@@ -1,5 +1,5 @@
 """
-Standard Pydantic models for Actions, Observations, and Episode State.
+server/models.py — Pydantic models for Actions, Observations, and Episode State.
 """
 
 from __future__ import annotations
@@ -15,10 +15,10 @@ from openenv.core.env_server.types import Action, Observation, State
 # ---------------------------------------------------------------------------
 
 class UrgencyLabel(str, Enum):
-    URGENT = "urgent"   # same-day response required
-    NORMAL = "normal"   # 24-48h response window
-    LOW    = "low"      # no rush, FYI emails
-    SPAM   = "spam"     # no response needed
+    URGENT = "urgent"
+    NORMAL = "normal"
+    LOW    = "low"
+    SPAM   = "spam"
 
 
 class Department(str, Enum):
@@ -31,10 +31,10 @@ class Department(str, Enum):
 
 
 class ActionType(str, Enum):
-    CLASSIFY = "classify"   # label urgency + priority (easy task)
-    RANK     = "rank"       # sort all emails by priority (medium task)
-    TRIAGE   = "triage"     # classify + draft reply + route (hard task)
-    DONE     = "done"       # signal episode complete
+    CLASSIFY = "classify"
+    RANK     = "rank"
+    TRIAGE   = "triage"
+    DONE     = "done"
 
 
 # ---------------------------------------------------------------------------
@@ -42,11 +42,7 @@ class ActionType(str, Enum):
 # ---------------------------------------------------------------------------
 
 class Email(Action):
-    """
-    Represents a single email in the inbox.
-    Inherits from Action so it can be embedded cleanly in observations.
-    Used as a data container — not an agent action.
-    """
+    """Single email in the inbox. Used as a data container."""
     id: str              = Field(..., description="Unique email ID, e.g. 'email_001'")
     subject: str         = Field(..., description="Email subject line")
     sender: str          = Field(..., description="Sender email address")
@@ -67,7 +63,7 @@ class EmailAction(Action):
     Easy   → action_type=CLASSIFY, email_id + urgency + priority
     Medium → action_type=RANK,     ranked_ids (all IDs in priority order)
     Hard   → action_type=TRIAGE,   email_id + urgency + priority + reply_draft + route_to
-    Done   → action_type=DONE      (signals episode complete)
+    Done   → action_type=DONE
     """
     action_type: ActionType = Field(..., description="Which action the agent is taking")
 
@@ -92,12 +88,10 @@ class EmailObservation(Observation):
     """
     What the agent sees at each step.
 
-    Inherits from Observation, which already provides:
+    Inherits from Observation which provides:
       .reward (float | None) — the step reward signal
       .done   (bool)         — whether the episode has ended
       .metadata (dict)       — extra debug info
-
-    We add the email-specific fields on top.
     """
     task_id: str                         = Field(...,  description="Active task: easy/medium/hard")
     task_description: str                = Field(...,  description="Plain-English instructions for the agent")
@@ -108,7 +102,7 @@ class EmailObservation(Observation):
     last_action_feedback: Optional[str]  = Field(None, description="Explanation of last reward")
     cumulative_reward: float             = Field(0.0,  description="Total reward accumulated this episode")
 
-    # Reward breakdown fields (for transparency and training signal interpretation)
+    # Reward breakdown fields
     correctness_score: float             = Field(0.0,  description="How correct was this action")
     efficiency_penalty: float            = Field(0.0,  description="Penalty for wasted/bad steps")
     completion_bonus: float              = Field(0.0,  description="Bonus for clean task completion")
@@ -120,11 +114,9 @@ class EmailObservation(Observation):
 
 class EmailState(State):
     """
-    Server-side episode metadata. Extends the base State which already has:
+    Server-side episode metadata. Extends base State which has:
       .episode_id (str | None)
       .step_count (int)
-
-    We add task-specific tracking fields.
     """
     task_id: Optional[str]   = Field(None, description="Active task ID")
     max_steps: int            = Field(10,   description="Max steps for current task")

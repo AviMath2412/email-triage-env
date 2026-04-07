@@ -1,16 +1,12 @@
 """
 server/environment.py — Email Triage Environment logic.
 
-Extends openenv.core.env_server.interfaces.Environment, implementing the three
-required abstract methods:
+Extends openenv.core.env_server.interfaces.Environment, implementing:
   - reset()  → start new episode, return EmailObservation
   - step()   → process action, compute reward, return EmailObservation
   - state    → property returning EmailState
 
-The reward function provides DENSE signal at every step:
-  - Partial credit (not just binary right/wrong)
-  - Efficiency bonus for finishing fast
-  - Penalties for wrong action types, missing fields, looping past max_steps
+The reward function provides DENSE signal at every step with partial credit.
 """
 
 from __future__ import annotations
@@ -28,8 +24,6 @@ from .models import (
 from .data import EMAIL_TEMPLATES, TASKS
 
 
-
-
 def _make_email(template_index: int, email_num: int) -> tuple[Email, dict]:
     subj, sender, body, urgency, priority, dept = EMAIL_TEMPLATES[template_index]
     email = Email(
@@ -44,21 +38,17 @@ def _make_email(template_index: int, email_num: int) -> tuple[Email, dict]:
     return email, {"urgency": urgency, "priority": priority, "department": dept}
 
 
-# ---------------------------------------------------------------------------
-# Environment — extends openenv-core's Environment base class
-# ---------------------------------------------------------------------------
-
 class EmailTriageEnvironment(Environment):
     """
-    Email Triage Environment.
+    Email Triage RL Environment.
 
-    Implements the three required abstract methods from Environment:
-      reset()  → start a new episode
-      step()   → take an action, return updated observation
-      state    → property returning current episode metadata
+    Three tasks of increasing difficulty:
+      easy   — classify a single email (urgency + priority)
+      medium — rank 10 emails by priority (Kendall-tau scoring)
+      hard   — full pipeline: classify + draft reply + route to department
     """
 
-    SUPPORTS_CONCURRENT_SESSIONS = True  # per-connection instance, no shared state
+    SUPPORTS_CONCURRENT_SESSIONS = True
 
     def __init__(self):
         super().__init__()
@@ -70,7 +60,7 @@ class EmailTriageEnvironment(Environment):
         self._task_id: Optional[str] = None
 
     # ------------------------------------------------------------------
-    # reset() — required abstract method
+    # Metadata
     # ------------------------------------------------------------------
 
     def get_metadata(self):
@@ -80,10 +70,14 @@ class EmailTriageEnvironment(Environment):
             description=(
                 "A real-world RL environment where agents triage emails: "
                 "classifying urgency, ranking inbox priority, drafting replies, "
-                "and routing to the correct department. Three tasks: easy, medium, hard."
+                "and routing to the correct department."
             ),
             version="1.0.0",
         )
+
+    # ------------------------------------------------------------------
+    # reset()
+    # ------------------------------------------------------------------
 
     def reset(
         self,
@@ -96,7 +90,6 @@ class EmailTriageEnvironment(Environment):
         if seed is not None:
             random.seed(seed)
 
-        # task_id can arrive as a top-level kwarg (from ResetRequest extra="allow")
         task_id = task_id or kwargs.get("task_id") or random.choice(list(TASKS.keys()))
         if task_id not in TASKS:
             raise ValueError(f"Unknown task_id '{task_id}'. Choose from: {list(TASKS.keys())}")
@@ -108,8 +101,6 @@ class EmailTriageEnvironment(Environment):
         self._cumulative_reward = 0.0
         self._done = False
 
-
-        # Reset episode state
         self._state = EmailState(
             episode_id=episode_id or str(uuid.uuid4()),
             step_count=0,
@@ -119,7 +110,7 @@ class EmailTriageEnvironment(Environment):
             done=False,
         )
 
-        # Generate emails for this task
+        # Generate emails
         if task_id == "easy":
             idx = random.randrange(len(EMAIL_TEMPLATES))
             email, gt = _make_email(idx, 1)
@@ -144,12 +135,10 @@ class EmailTriageEnvironment(Environment):
             self._ground_truths[email.id] = gt
 
         self._state.email_count = len(self._emails)
-        obs = self._make_obs()
-        print(f"[DEBUG] Reset returning obs: {obs}")
-        return obs
+        return self._make_obs()
 
     # ------------------------------------------------------------------
-    # step() — required abstract method
+    # step()
     # ------------------------------------------------------------------
 
     def step(
@@ -160,13 +149,11 @@ class EmailTriageEnvironment(Environment):
     ) -> EmailObservation:
         """Process one action. Returns updated observation with reward signal."""
 
-        # Guard: no reset called yet (can happen on stateless HTTP /step calls)
         if self._task_id is None:
             obs = self._make_obs_error("Call /reset before /step.")
             obs.done = True
             return obs
 
-        # Guard: episode already ended
         if self._done:
             obs = self._make_obs(
                 feedback="Episode already complete. No further actions needed.",
@@ -178,11 +165,9 @@ class EmailTriageEnvironment(Environment):
 
         self._state.step_count += 1
 
-        # Agent explicitly signals done
         if action.action_type == ActionType.DONE:
             return self._handle_done()
 
-        # Exceeded step budget
         if self._state.step_count > self._state.max_steps:
             self._done = True
             self._state.done = True
@@ -194,7 +179,6 @@ class EmailTriageEnvironment(Environment):
             obs.done = True
             return obs
 
-        # Route to task handler
         if self._task_id == "easy":
             return self._step_easy(action)
         elif self._task_id == "medium":
@@ -205,12 +189,11 @@ class EmailTriageEnvironment(Environment):
             raise RuntimeError(f"Unknown task_id: {self._task_id}")
 
     # ------------------------------------------------------------------
-    # state — required abstract property
+    # state property
     # ------------------------------------------------------------------
 
     @property
     def state(self) -> EmailState:
-        """Current episode metadata. Does not expose ground truth."""
         return self._state
 
     # ------------------------------------------------------------------
@@ -219,15 +202,15 @@ class EmailTriageEnvironment(Environment):
 
     def _step_easy(self, action: EmailAction) -> EmailObservation:
         """
-        Easy task: classify a single email.
+        Easy: classify a single email.
 
-        Reward breakdown (summing to max ~1.15):
-          0.50 × urgency correct (exact match only)
-          0.30 × priority score (1.0 exact, 0.5 off-by-1, 0.25 off-by-2, 0 otherwise)
+        Reward:
+          0.50 × urgency correct (exact match)
+          0.30 × priority score (1.0 exact / 0.5 off-by-1 / 0.25 off-by-2)
           0.20 × efficiency bonus (decays with step count)
         Penalties:
-          -0.10 for wrong action type
-          -0.05 for missing required fields
+          -0.10 wrong action type
+          -0.05 missing fields
         """
         if action.action_type != ActionType.CLASSIFY:
             return self._make_obs(
@@ -249,10 +232,8 @@ class EmailTriageEnvironment(Environment):
             )
 
         urgency_score = 1.0 if action.urgency == gt["urgency"] else 0.0
-
         diff = abs(action.priority - gt["priority"])
         priority_score = 1.0 if diff == 0 else (0.5 if diff == 1 else (0.25 if diff == 2 else 0.0))
-
         efficiency = max(0.0, 0.20 * (1 - (self._state.step_count - 1) / self._state.max_steps))
         correctness = 0.50 * urgency_score + 0.30 * priority_score
         total = round(correctness + efficiency, 4)
@@ -281,13 +262,10 @@ class EmailTriageEnvironment(Environment):
 
     def _step_medium(self, action: EmailAction) -> EmailObservation:
         """
-        Medium task: rank 10 emails by priority.
+        Medium: rank 10 emails by priority using Kendall-tau scoring.
 
-        Uses Kendall-tau: counts concordant pairs in the submitted ranking.
-        Perfect ranking = 1.0. Episode ends early if tau ≥ 0.95.
-        Agent may submit multiple rankings; each is scored independently.
-
-        Reward = tau_score × 0.85 + max(improvement, 0) × 0.15
+        Reward = tau * 0.85 + improvement_bonus * 0.15
+        Episode ends early when tau >= 0.95.
         """
         if action.action_type != ActionType.RANK:
             return self._make_obs(
@@ -311,7 +289,6 @@ class EmailTriageEnvironment(Environment):
                 reward=-0.10, efficiency_penalty=-0.10,
             )
 
-        # Build correct order (ground truth: sort by priority desc)
         correct_order = sorted(
             self._emails,
             key=lambda e: self._ground_truths[e.id]["priority"],
@@ -319,7 +296,6 @@ class EmailTriageEnvironment(Environment):
         )
         correct_ids = [e.id for e in correct_order]
 
-        # Kendall-tau: count concordant pairs
         n = len(action.ranked_ids)
         pos_sub = {eid: i for i, eid in enumerate(action.ranked_ids)}
         pos_cor = {eid: i for i, eid in enumerate(correct_ids)}
@@ -352,19 +328,19 @@ class EmailTriageEnvironment(Environment):
             correctness_score=tau,
         )
         obs.done = perfect
-        obs.metadata["tau_score"]    = tau
+        obs.metadata["tau_score"]     = tau
         obs.metadata["correct_order"] = correct_ids
         return obs
 
     def _step_hard(self, action: EmailAction) -> EmailObservation:
         """
-        Hard task: full triage pipeline.
+        Hard: full triage pipeline.
 
         Weighted score:
-          30% — classification accuracy (urgency + priority)
-          30% — reply draft quality (heuristic: length, greeting, acknowledgment, sign-off)
-          40% — routing accuracy (correct department)
-          +0.15 efficiency bonus for completing in fewer steps
+          30% — classification (urgency + priority)
+          30% — reply quality (heuristic)
+          40% — routing accuracy
+          +0.15 efficiency bonus
         """
         if action.action_type != ActionType.TRIAGE:
             return self._make_obs(
@@ -387,20 +363,16 @@ class EmailTriageEnvironment(Environment):
                 reward=-0.10, efficiency_penalty=-0.10,
             )
 
-        # --- Classification score (30%) ---
-        urgency_ok   = action.urgency == gt["urgency"]
-        diff         = abs(action.priority - gt["priority"])
-        prio_score   = 1.0 if diff == 0 else (0.5 if diff == 1 else 0.0)
+        urgency_ok = action.urgency == gt["urgency"]
+        diff = abs(action.priority - gt["priority"])
+        prio_score = 1.0 if diff == 0 else (0.5 if diff == 1 else 0.0)
         classify_score = 0.5 * urgency_ok + 0.5 * prio_score
 
-        # --- Reply quality score (30%) ---
         reply_score = self._score_reply(action.reply_draft, action.email_id)
 
-        # --- Routing score (40%) ---
-        route_ok    = action.route_to == gt["department"]
+        route_ok = action.route_to == gt["department"]
         route_score = 1.0 if route_ok else 0.0
 
-        # --- Efficiency bonus ---
         efficiency = max(0.0, 0.15 * (1 - (self._state.step_count - 1) / self._state.max_steps))
 
         correctness = 0.30 * classify_score + 0.30 * reply_score + 0.40 * route_score
@@ -432,7 +404,6 @@ class EmailTriageEnvironment(Environment):
     def _handle_done(self) -> EmailObservation:
         self._done = True
         self._state.done = True
-        # Penalize quitting without attempting
         if self._cumulative_reward < 0.05 and self._state.step_count <= 1:
             obs = self._make_obs(
                 feedback="Quit immediately without attempting the task.",
@@ -448,7 +419,6 @@ class EmailTriageEnvironment(Environment):
     # ------------------------------------------------------------------
 
     def _make_obs_error(self, message: str) -> EmailObservation:
-        """Return a minimal error observation when environment is not initialized."""
         return EmailObservation(
             task_id="none",
             task_description=message,
@@ -478,17 +448,17 @@ class EmailTriageEnvironment(Environment):
         # Acknowledgment of subject matter (20%)
         email = next((e for e in self._emails if e.id == email_id), None)
         if email:
-            subject_words = set(email.subject.lower().split()) - {"the","a","an","is","for","re:","—","-"}
+            subject_words = set(email.subject.lower().split()) - {"the", "a", "an", "is", "for", "re:", "—", "-"}
             reply_words   = set(rl.split())
             overlap = len(subject_words & reply_words) / max(1, len(subject_words))
             score += 0.20 * min(1.0, overlap * 2)
 
         # Committed action (20%)
-        if any(p in rl for p in ["will","we'll","i'll","investigating","refund","resolved","fix","escalated"]):
+        if any(p in rl for p in ["will", "we'll", "i'll", "investigating", "refund", "resolved", "fix", "escalated"]):
             score += 0.20
 
         # Sign-off (15%)
-        if any(s in rl for s in ["regards","sincerely","best","thank you","thanks","cheers"]):
+        if any(s in rl for s in ["regards", "sincerely", "best", "thank you", "thanks", "cheers"]):
             score += 0.15
 
         return round(min(1.0, score), 3)
@@ -501,7 +471,6 @@ class EmailTriageEnvironment(Environment):
         efficiency_penalty: float = 0.0,
         completion_bonus: float = 0.0,
     ) -> EmailObservation:
-        """Build an EmailObservation from current state."""
         task = TASKS[self._task_id]
         single_email = self._emails[0] if len(self._emails) == 1 else None
         inbox        = self._emails    if len(self._emails) > 1  else []
@@ -515,10 +484,8 @@ class EmailTriageEnvironment(Environment):
             max_steps=self._state.max_steps,
             last_action_feedback=feedback,
             cumulative_reward=round(self._cumulative_reward, 4),
-            # Observation base-class fields
             reward=reward,
             done=self._done,
-            # Reward breakdown
             correctness_score=correctness_score,
             efficiency_penalty=efficiency_penalty,
             completion_bonus=completion_bonus,

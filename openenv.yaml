@@ -1,7 +1,3 @@
-# openenv.yaml — Environment manifest
-# Read by `openenv validate` and published to Hugging Face Hub.
-# Tag your HF Space with "openenv" for discovery.
-
 name: email-triage-env
 version: "1.0.0"
 description: >
@@ -10,7 +6,7 @@ description: >
   and route emails to the correct department — mirroring the work of an executive
   assistant managing a busy inbox.
 
-author: "solo-warrior"
+author: "AviMath2412"
 license: "MIT"
 
 tags:
@@ -22,12 +18,10 @@ tags:
   - productivity
   - multi-task
 
-# Container configuration (Hugging Face Spaces Docker Space)
 container:
   port: 7860
   health_check: "/health"
 
-# Core OpenEnv interface endpoints (provided by create_fastapi_app)
 endpoints:
   websocket: "/ws"
   reset:     "/reset"
@@ -36,13 +30,11 @@ endpoints:
   docs:      "/docs"
   health:    "/health"
 
-# Extra endpoints added by this environment
 extra_endpoints:
   tasks:    "/tasks"
   grader:   "/grader"
   baseline: "/baseline"
 
-# Task definitions
 tasks:
   - id: easy
     name: "Single Email Classification"
@@ -68,35 +60,21 @@ tasks:
     pass_threshold: 0.55
     excellent_threshold: 0.80
 
-# Action space
 action_space:
   type: structured
   model: EmailAction
   action_types: [classify, rank, triage, done]
 
-# Observation space
 observation_space:
   type: structured
   model: EmailObservation
-  reward_included: true    # reward is a field on Observation (openenv-core standard)
-  done_included: true      # done is a field on Observation (openenv-core standard)
+  reward_included: true
+  done_included: true
 
-# Reward characteristics
 reward:
   type: continuous
   range: [-0.20, 1.15]
-  shape: step-wise         # signal at every step, not just episode end
-  partial_credit: true     # correct but imperfect actions still earn reward
-
-# Baseline scores (heuristic keyword agent vs zero-shot LLM)
-baseline_scores:
-  heuristic_v1:
-    easy:   0.85
-    medium: 0.74   # normalized task score
-    hard:   0.92
-  gpt4o_mini_zeroshot:
-    easy:   0.94
-    medium: 0.72   # avg tau
-    hard:   0.82
+  shape: step-wise
+  partial_credit: true
 
 python_requires: ">=3.10"
