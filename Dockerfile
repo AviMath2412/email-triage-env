@@ -12,7 +12,7 @@
 # With OpenAI key (for /baseline endpoint):
 #   docker run -p 7860:7860 -e OPENAI_API_KEY=sk-... email-triage-env
 
-FROM python:3.11-slim
+FROM public.ecr.aws/docker/library/python:3.11-slim
 
 # Non-root user required by Hugging Face Spaces
 RUN useradd -m -u 1000 appuser
