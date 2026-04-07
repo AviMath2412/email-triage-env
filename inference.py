@@ -27,6 +27,8 @@ API_BASE_URL = os.getenv("API_BASE_URL") or "https://api.openai.com/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4o-mini"
 BENCHMARK = "email-triage-env"
 ENV_URL = os.getenv("ENV_URL") or os.getenv("PING_URL") or "http://localhost:7860"
+# Must be large enough to survive 3-decimal formatting in `[END] score=...`
+SCORE_EPSILON = 1e-3
 
 # --- Stdout Logging Helpers ---
 def log_start(task: str, env: str, model: str) -> None:
@@ -43,6 +45,13 @@ def log_step(step: int, action: str, reward: float, done: bool, error: Optional[
 def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
+
+
+def normalize_score_strict(value: float) -> float:
+    """
+    Force score into strict (0, 1) bounds for validator compatibility.
+    """
+    return max(SCORE_EPSILON, min(1.0 - SCORE_EPSILON, value))
 
 # --- LLM Integration ---
 SYSTEM_PROMPT = """You are an expert executive assistant. You are interacting with
@@ -152,12 +161,13 @@ async def run_episode(client: OpenAI, task_id: str, env_url: str) -> Dict[str, A
         # In this env, rewards are per-step and often binary or close to 1.0 for success.
         # We'll use the cumulative reward / max_steps as a simple proxy, clamping to [0, 1].
         total_reward = sum(rewards)
-        score = min(max(total_reward, 0.0), 1.0) # Heuristic for this evaluation spec
+        raw_score = min(max(total_reward, 0.0), 1.0)
+        score = normalize_score_strict(raw_score)
         success = total_reward >= pass_threshold
         
     except Exception as e:
         print(f"[DEBUG] Episode failed: {e}", file=sys.stderr)
-        score = 0.0
+        score = normalize_score_strict(0.0)
     finally:
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 

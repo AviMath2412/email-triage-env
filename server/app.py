@@ -17,6 +17,16 @@ from .environment import EmailTriageEnvironment
 from .data import TASKS
 from .baseline_heuristic import heuristic_agent
 
+# Must be large enough to survive rounding in API responses (e.g. 4 decimals)
+SCORE_EPSILON = 1e-3
+
+
+def _strict_score(value: float) -> float:
+    """
+    Clamp score into strict (0, 1) for external validators.
+    """
+    return max(SCORE_EPSILON, min(1.0 - SCORE_EPSILON, value))
+
 # ---------------------------------------------------------------------------
 # Create the core OpenEnv FastAPI app
 # ---------------------------------------------------------------------------
@@ -56,7 +66,7 @@ async def grade_episode(request: dict):
     and step efficiency.
     """
     task_id = request.get("task_id")
-    final_score = float(request.get("final_score", 0.0))
+    final_score = _strict_score(float(request.get("final_score", 0.0)))
     actions = request.get("actions", [])
 
     if task_id not in TASKS:
@@ -67,7 +77,7 @@ async def grade_episode(request: dict):
     
     # Calculate efficiency bonus (penalize if agent wasted steps)
     efficiency = max(0.0, 1.0 - max(0, n_steps - 1) / t["max_steps"])
-    grader_score = round(final_score * 0.85 + efficiency * 0.15, 4)
+    grader_score = _strict_score(round(final_score * 0.85 + efficiency * 0.15, 4))
 
     passed = final_score >= t["pass_threshold"]
     excellent = final_score >= t["excellent_threshold"]
@@ -109,7 +119,7 @@ async def run_baseline(task_id: str | None = None):
             n_steps += 1
             
         results[tid] = {
-            "score": round(max(0.0, total_reward), 4), 
+            "score": round(_strict_score(max(0.0, total_reward)), 4),
             "steps": n_steps
         }
 

@@ -92,8 +92,8 @@ reward:
 baseline_scores:
   heuristic_v1:
     easy:   0.85
-    medium: 5.10   # cumulative tau over 8 steps
-    hard:   1.15
+    medium: 0.74   # normalized task score
+    hard:   0.92
   gpt4o_mini_zeroshot:
     easy:   0.94
     medium: 0.72   # avg tau
