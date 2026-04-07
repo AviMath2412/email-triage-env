@@ -158,58 +158,62 @@ async def run_episode(
 ) -> dict:
     """Run one full episode. Returns score dict."""
 
-    async with EmailTriageEnv(base_url=base_url) as env:
-        # Pass task_id as a reset kwarg — the server reads it from the payload
-        result = await env.reset(task_id=task_id)
-        obs = result.observation
-
-        if verbose:
-            print(f"\n  Episode {episode_num} | task={task_id}")
-            if obs.single_email:
-                print(f"  Email: {obs.single_email.subject[:65]}...")
-            elif obs.inbox:
-                print(f"  Inbox: {len(obs.inbox)} emails")
-
-        total_reward = 0.0
-        actions_log  = []
-        step = 0
-
-        while not obs.done:
-            action = _call_llm(openai_client, obs, model)
-            result = await env.step(action)
-            obs    = result.observation
-            rew    = result.reward or 0.0
-            total_reward += rew
-            actions_log.append(action.model_dump(exclude_none=True))
-            step += 1
+    try:
+        async with EmailTriageEnv(base_url=base_url) as env:
+            result = await env.reset(task_id=task_id)
+            obs = result.observation
 
             if verbose:
-                feedback = (obs.last_action_feedback or "")[:70]
-                print(f"    step {step}: {action.action_type} | reward={rew:.3f} | {feedback}...")
+                print(f"\n  Episode {episode_num} | task={task_id}")
+                if obs.single_email:
+                    print(f"  Email: {obs.single_email.subject[:65]}...")
+                elif obs.inbox:
+                    print(f"  Inbox: {len(obs.inbox)} emails")
 
-            if obs.done or result.done:
-                break
+            total_reward = 0.0
+            actions_log  = []
+            step = 0
 
-    # Hit the grader endpoint directly (REST, no WS needed)
-    import requests
-    grader_url = base_url.rstrip("/") + "/grader"
-    grade = requests.post(grader_url, json={
-        "task_id":     task_id,
-        "final_score": max(0.0, total_reward),
-        "actions":     actions_log,
-    }).json()
+            while not obs.done:
+                action = _call_llm(openai_client, obs, model)
+                result = await env.step(action)
+                obs    = result.observation
+                rew    = result.reward or 0.0
+                total_reward += rew
+                actions_log.append(action.model_dump(exclude_none=True))
+                step += 1
 
-    if verbose:
-        print(f"  → grader_score={grade['grader_score']:.4f}  grade={grade['grade'].upper()}")
+                if verbose:
+                    feedback = (obs.last_action_feedback or "")[:70]
+                    print(f"    step {step}: {action.action_type} | reward={rew:.3f} | {feedback}...")
 
-    return {
-        "episode":      episode_num,
-        "task_id":      task_id,
-        "total_reward": round(total_reward, 4),
-        "grader_score": grade["grader_score"],
-        "grade":        grade["grade"],
-        "steps":        step,
-    }
+                if obs.done or result.done:
+                    break
+
+        import requests
+        grader_url = base_url.rstrip("/") + "/grader"
+        grade_resp = requests.post(grader_url, json={
+            "task_id":     task_id,
+            "final_score": max(0.0, total_reward),
+            "actions":     actions_log,
+        }, timeout=10)
+        grade_resp.raise_for_status()
+        grade = grade_resp.json()
+
+        if verbose:
+            print(f"  → grader_score={grade['grader_score']:.4f}  grade={grade['grade'].upper()}")
+
+        return {
+            "episode":      episode_num,
+            "task_id":      task_id,
+            "total_reward": round(total_reward, 4),
+            "grader_score": grade["grader_score"],
+            "grade":        grade["grade"],
+            "steps":        step,
+        }
+    except Exception as exc:
+        print(f"    [Episode error] {type(exc).__name__}: {exc}")
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -219,15 +223,25 @@ async def run_episode(
 async def _main(args: argparse.Namespace) -> None:
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        print("\n[!] WARNING: OPENAI_API_KEY not found in environment.")
-        print("    Inference script initialized in 'Verification Mode'.")
-        print("    To run the actual baseline: export OPENAI_API_KEY=sk-...")
-        return
+        print("\nERROR: OPENAI_API_KEY environment variable not set.")
+        print("Set it with: export OPENAI_API_KEY=sk-...")
+        sys.exit(1)
 
     openai_client = OpenAI(api_key=api_key)
     base_url = args.env_url or os.environ.get("ENV_URL", "http://localhost:7860")
     tasks    = list(TASKS.keys()) if args.task == "all" else [args.task]
     model    = args.model
+
+    # Connectivity Check
+    import requests
+    try:
+        health_check = base_url.rstrip("/") + "/health"
+        requests.get(health_check, timeout=5).raise_for_status()
+    except Exception as e:
+        print(f"\nERROR: Environment container not reachable at: {base_url}")
+        print(f"       Health check failed: {e}")
+        print("       Ensure the environment server is running (PORT=7860 python -m server.app)")
+        sys.exit(1)
 
     print(f"Baseline agent: {model}")
     print(f"Environment:    {base_url}")
@@ -236,42 +250,46 @@ async def _main(args: argparse.Namespace) -> None:
 
     all_results: dict[str, dict] = {}
 
-    for task_id in tasks:
+    try:
+        for task_id in tasks:
+            print(f"\n{'='*55}")
+            print(f"TASK: {task_id.upper()} — {TASKS[task_id]['name']}")
+            print(f"{'='*55}")
+
+            episodes = []
+            for ep in range(1, args.episodes + 1):
+                result = await run_episode(
+                    base_url, openai_client, task_id, ep, model, verbose=True
+                )
+                episodes.append(result)
+
+            avg   = sum(r["grader_score"] for r in episodes) / len(episodes)
+            passes = sum(1 for r in episodes if r["grade"] != "fail") / len(episodes)
+            all_results[task_id] = {
+                "avg_grader_score": round(avg, 4),
+                "pass_rate":        round(passes, 4),
+                "episodes":         episodes,
+            }
+            print(f"\n  Summary [{task_id}]: avg={avg:.4f}  pass_rate={passes:.0%}")
+
+        # Final table
         print(f"\n{'='*55}")
-        print(f"TASK: {task_id.upper()} — {TASKS[task_id]['name']}")
+        print(f"BASELINE SUMMARY  (model: {model})")
         print(f"{'='*55}")
+        print(f"{'Task':<10} {'Avg Score':>12} {'Pass Rate':>10}")
+        print("-" * 36)
+        for tid, res in all_results.items():
+            print(f"{tid:<10} {res['avg_grader_score']:>12.4f} {res['pass_rate']:>10.0%}")
 
-        episodes = []
-        for ep in range(1, args.episodes + 1):
-            result = await run_episode(
-                base_url, openai_client, task_id, ep, model, verbose=True
-            )
-            episodes.append(result)
-
-        avg   = sum(r["grader_score"] for r in episodes) / len(episodes)
-        passes = sum(1 for r in episodes if r["grade"] != "fail") / len(episodes)
-        all_results[task_id] = {
-            "avg_grader_score": round(avg, 4),
-            "pass_rate":        round(passes, 4),
-            "episodes":         episodes,
-        }
-        print(f"\n  Summary [{task_id}]: avg={avg:.4f}  pass_rate={passes:.0%}")
-
-    # Final table
-    print(f"\n{'='*55}")
-    print(f"BASELINE SUMMARY  (model: {model})")
-    print(f"{'='*55}")
-    print(f"{'Task':<10} {'Avg Score':>12} {'Pass Rate':>10}")
-    print("-" * 36)
-    for tid, res in all_results.items():
-        print(f"{tid:<10} {res['avg_grader_score']:>12.4f} {res['pass_rate']:>10.0%}")
-
-    # Persist results
-    out_path = os.path.join(os.path.dirname(__file__), "outputs", "evals", "baseline_results.json")
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    with open(out_path, "w") as fh:
-        json.dump({"model": model, "env_url": base_url, "results": all_results}, fh, indent=2)
-    print(f"\nResults saved → {out_path}")
+        # Persist results
+        out_path = os.path.join(os.path.dirname(__file__), "outputs", "evals", "baseline_results.json")
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        with open(out_path, "w") as fh:
+            json.dump({"model": model, "env_url": base_url, "results": all_results}, fh, indent=2)
+        print(f"\nResults saved → {out_path}")
+    except Exception as e:
+        print(f"\n[!] Unexpected error during baseline execution: {e}")
+        sys.exit(1)
 
 
 def main() -> None:
