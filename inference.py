@@ -25,10 +25,11 @@ from server.models import EmailAction, EmailObservation
 from server.data import TASKS
 
 # --- Configuration ---
-API_KEY      = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY")
+HF_TOKEN     = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY")
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME   = os.getenv("MODEL_NAME", "gpt-4o-mini")
 ENV_URL      = os.getenv("ENV_URL") or os.getenv("PING_URL", "http://localhost:7860")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 BENCHMARK    = "email-triage-env"
 SCORE_EPSILON = 1e-3
 
@@ -188,9 +189,9 @@ async def run_episode(client: OpenAI, task_id: str, env_url: str) -> Dict[str, A
 
 
 async def main() -> None:
-    if not API_KEY:
+    if not HF_TOKEN:
         print("\nERROR: OPENAI_API_KEY / HF_TOKEN environment variable not set.")
-        print("Set it with: export OPENAI_API_KEY=sk-...")
+        print("Set it with: export HF_TOKEN=sk-...")
         sys.exit(1)
 
     parser = argparse.ArgumentParser(description="Run LLM inference against Email Triage Env")
@@ -208,7 +209,7 @@ async def main() -> None:
         print(f"       Error: {e}")
         sys.exit(1)
 
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
     tasks_to_run = [args.task] if args.task != "all" else ["easy", "medium", "hard"]
 
     for tid in tasks_to_run:
