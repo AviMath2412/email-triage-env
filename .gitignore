@@ -14,4 +14,3 @@ venv/
 .mypy_cache/
 outputs/logs/
 *.log
-uv.lock
